@@ -1,16 +1,17 @@
-# GameAssetViewer
+# AssetsPreview
 
-一个**纯前端**游戏资源预览工具，无需后端服务、无需安装，直接在浏览器中读取本地 Cocos Creator 资源文件夹，实现全类型资源的可视化浏览与播放。
+一个**纯前端**游戏资源预览工具，无需后端服务、无需安装，直接在浏览器中读取本地游戏资源文件夹，实现全类型资源的可视化浏览与播放。
 
 ## 功能特性
 
 | 资源类型 | 支持能力 |
 |---|---|
-| 图片（PNG / JPG / WebP / GIF 等）| 缩放 / 平移预览，25%–400% |
-| 音频（MP3 / OGG / WAV 等）| 播放器，进度条，音量，循环 |
-| 图集（Plist / TexturePacker JSON）| 全图预览 + 子 Sprite 列表，支持旋转帧 |
-| DragonBones（_ske.json + _tex.json + _tex.png）| PixiJS 实时播放，动画切换，速度控制 |
-| Spine（.json + .atlas + .png）| spine-player 实时播放，动画 / 皮肤切换 |
+| 图片（PNG / JPG / WebP 等）| 缩放 / 平移预览，25%–400% |
+| 音频（MP3 / OGG / WAV 等）| 卡片内快捷播放 + 完整播放器（进度条 / 音量 / 循环） |
+| 图集（Plist）| 全图预览 + 子 Sprite 列表，支持旋转帧 |
+| DragonBones（_ske.json + _tex.json + _tex.png）| PixiJS 实时播放，动画切换，速度控制，拖拽 / 缩放 |
+| Spine JSON（.json + .atlas + .png）| PixiJS 实时播放，支持 3.7 / 3.8 / 4.0 / 4.1 全版本，动画 / 皮肤切换，拖拽 / 缩放 |
+| Spine 二进制（.skel + .atlas + .png）| 同上，自动识别版本，支持二进制格式 |
 | TTF / OTF / WOFF 字体 | FontFace API 动态加载，多尺寸字样预览 |
 | BMFont（.fnt + .png）| Canvas 渲染，自定义文字输入 |
 
@@ -20,6 +21,7 @@
 - 模糊搜索（Fuse.js）
 - 排序（名称 / 大小 / 时间，升降序）
 - 右键菜单：复制相对路径 / 文件名
+- 骨骼动画查看器：自动居中适配、拖拽移动、滚轮缩放、双击重置
 - 构建为**单个 HTML 文件**，可离线使用
 
 ## 技术栈
@@ -29,7 +31,9 @@
 - [TypeScript](https://www.typescriptlang.org/)
 - [UnoCSS](https://unocss.dev/) — 原子化 CSS
 - [Pinia](https://pinia.vuejs.org/) — 状态管理
-- [PixiJS 7](https://pixijs.com/) — DragonBones 渲染后端
+- [PixiJS 7](https://pixijs.com/) — DragonBones / Spine 渲染后端
+- [pixi-spine 4](https://github.com/pixijs/spine) — Spine 3.7 / 3.8 / 4.0 / 4.1 全版本运行时
+- [@md5crypt/dragonbones-pixi](https://github.com/md5crypt/dragonbones-pixi) — DragonBones 运行时
 - [Fuse.js](https://www.fusejs.io/) — 模糊搜索
 
 ## 快速开始
@@ -54,19 +58,7 @@ npm run dev
 npm run build
 ```
 
-产物为 `dist/index.html`（单文件，约 650 KB / 200 KB gzip），可直接双击在浏览器中打开。
-
-## 可选：离线动画运行时
-
-DragonBones 和 Spine 运行时通过动态脚本加载，默认先尝试本地 `/vendor/` 目录，找不到则回退到 CDN。
-
-如需完全离线使用，将对应文件放到 `public/vendor/`：
-
-| 文件名 | 来源 |
-|---|---|
-| `dragonbones-pixi.js` | [DragonBonesJS GitHub](https://github.com/DragonBones/DragonBonesJS) → `Pixi/out/DragonBonesPixi.min.js` |
-| `spine-player-3.8.js` | [EsotericSoftware](https://esotericsoftware.com/spine-player) |
-| `spine-player-3.6.js` | 同上（如项目使用 3.6 版本） |
+产物为 `dist/index.html`（单文件），可直接双击在浏览器中打开。
 
 ## 项目结构
 
@@ -80,7 +72,7 @@ src/
 │   └── scanner.ts       # 资源识别与扫描
 ├── stores/              # Pinia 状态（assetStore, previewStore）
 ├── types/               # TypeScript 类型定义
-├── utils/               # scriptLoader 等工具函数
+├── utils/               # 工具函数
 └── viewers/             # 各类型预览组件
     ├── ImageViewer.vue
     ├── AudioViewer.vue
@@ -95,7 +87,7 @@ src/
 
 推荐使用 **Chrome 86+** 或 **Edge 86+**（需要 File System Access API）。
 
-Firefox / Safari 降级为 `<input webkitdirectory>` 上传模式，功能相同但无法访问历史记录。
+Firefox / Safari 降级为 `<input webkitdirectory>` 上传模式，功能相同但无法记忆上次目录。
 
 ## License
 
