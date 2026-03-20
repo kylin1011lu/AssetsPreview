@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Vite / TypeScript caches
+*.local
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/extensions.json
+
+# Temp files
+build_out.txt
+build_err.txt
+
+# Optional: vendor runtime files (place DragonBones / Spine runtimes here)
+# public/vendor/
