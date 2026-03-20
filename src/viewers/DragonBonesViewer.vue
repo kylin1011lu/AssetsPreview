@@ -262,7 +262,7 @@ onUnmounted(destroyPixi)
   <Teleport to="body">
     <Transition name="fade">
       <div
-        v-if="preview.visible && preview.asset?.type === 'dragonbones'"
+        v-if="preview.visible && preview.asset?.type === 'dragonbones' && !preview.forceImage"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
         @click.self="preview.close"
       >

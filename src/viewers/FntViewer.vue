@@ -12,7 +12,7 @@ const loading      = ref(false)
 const error        = ref('')
 const fntData      = ref<FntData | null>(null)
 const textureUrl   = ref<string | null>(null)
-const customText   = ref('AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVv012345678')
+const customText   = ref('')
 const canvasRef    = ref<HTMLCanvasElement | null>(null)
 const textureImgEl = ref<HTMLImageElement | null>(null)
 let blobUrl: string | null = null
@@ -25,7 +25,7 @@ watch(
     fntData.value    = null
     textureUrl.value = null
     error.value      = ''
-    customText.value = 'AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVv012345678'
+    customText.value = ''
     if (!asset || asset.type !== 'fnt') return
     loading.value = true
     try {
@@ -34,6 +34,17 @@ watch(
       const text = await readFileAsText(fntFile)
       const parsed = parseFnt(text)
       fntData.value = parsed
+
+      // Build preview text from all chars defined in the fnt file
+      // Sort: printable ASCII (32-126) first, then everything else by code point
+      const codes = [...parsed.chars.keys()].filter(c => c > 0)
+      codes.sort((a, b) => {
+        const aAscii = a >= 32 && a <= 126
+        const bAscii = b >= 32 && b <= 126
+        if (aAscii !== bAscii) return aAscii ? -1 : 1
+        return a - b
+      })
+      customText.value = codes.map(c => String.fromCodePoint(c)).join('')
 
       // Find texture png
       const pngFile = asset.files.find(f =>
@@ -67,25 +78,38 @@ function renderText() {
 
   const text = customText.value
   const scale = 1
-  const lineH = fnt.lineHeight * scale
   const padding = 8
 
-  // Calculate total width (single line)
+  // Calculate canvas dimensions from actual character extents
   let totalW = 0
+  let maxBottom = 0
+  let minTop = Infinity
   for (const ch of text) {
     const code = ch.codePointAt(0)!
     const c = fnt.chars.get(code)
-    if (c) totalW += c.xadvance * scale
+    if (c && c.width > 0) {
+      const top    = c.yoffset * scale
+      const bottom = top + c.height * scale
+      if (top < minTop)    minTop = top
+      if (bottom > maxBottom) maxBottom = bottom
+      totalW += c.xadvance * scale
+    } else {
+      totalW += (fnt.chars.get(32)?.xadvance ?? 8) * scale
+    }
   }
+  if (minTop === Infinity) minTop = 0
+  // Shift all draws down if any char has negative yoffset
+  const yShift = minTop < 0 ? -minTop : 0
+  const contentH = maxBottom + yShift
 
   canvas.width  = Math.max(totalW + padding * 2, 100)
-  canvas.height = lineH + padding * 2
+  canvas.height = Math.max(contentH + padding * 2, fnt.lineHeight * scale + padding * 2)
 
   const ctx = canvas.getContext('2d')!
   ctx.clearRect(0, 0, canvas.width, canvas.height)
 
   let x = padding
-  const y = padding
+  const y = padding + yShift
   for (const ch of text) {
     const code = ch.codePointAt(0)!
     const c = fnt.chars.get(code)
@@ -117,7 +141,7 @@ watch(customText, () => nextTick(renderText))
   <Teleport to="body">
     <Transition name="fade">
       <div
-        v-if="preview.visible && preview.asset?.type === 'fnt'"
+        v-if="preview.visible && preview.asset?.type === 'fnt' && !preview.forceImage"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
         @click.self="preview.close"
       >

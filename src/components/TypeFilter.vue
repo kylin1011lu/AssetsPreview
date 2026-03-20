@@ -25,8 +25,8 @@ const isImageMode = computed(() =>
   store.filter.type === 'image' || store.filter.type === 'image-all'
 )
 
-function selectType(type: TypeFilter) {
-  store.setTypeFilter(store.filter.type === type ? null : type)
+function selectType(type: TypeFilter | null) {
+  store.setTypeFilter(type)
 }
 
 function selectExt(ext: string) {
@@ -38,6 +38,13 @@ function selectExt(ext: string) {
   <div class="flex flex-col gap-1.5">
     <div class="flex items-center gap-1.5 flex-wrap">
       <span class="text-xs text-gray-500">类型：</span>
+
+      <!-- 全部 tab -->
+      <button
+        class="text-xs px-2 py-0.5 rounded font-medium cursor-pointer transition-all"
+        :class="store.filter.type === null ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200'"
+        @click="selectType(null)"
+      >全部</button>
 
       <!-- Image filter buttons -->
       <button
@@ -57,12 +64,6 @@ function selectExt(ext: string) {
         @click="selectType(f.type)"
       >{{ f.label }}</button>
 
-      <!-- Clear button -->
-      <button
-        v-if="store.filter.type !== null"
-        class="text-xs text-gray-500 hover:text-gray-300 ml-1"
-        @click="store.setTypeFilter(null)"
-      >清除</button>
     </div>
 
     <!-- Image format sub-filter -->

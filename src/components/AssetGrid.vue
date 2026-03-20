@@ -61,10 +61,10 @@ function handleKey(e: KeyboardEvent) {
   const assets = props.assets
   const idx = preview.listIndex
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-    if (idx < assets.length - 1) preview.open(assets[idx + 1], idx + 1)
+    if (idx < assets.length - 1) preview.open(assets[idx + 1], idx + 1, { forceImage: preview.forceImage })
     e.preventDefault()
   } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-    if (idx > 0) preview.open(assets[idx - 1], idx - 1)
+    if (idx > 0) preview.open(assets[idx - 1], idx - 1, { forceImage: preview.forceImage })
     e.preventDefault()
   } else if (e.key === 'Escape') {
     preview.close()
@@ -114,7 +114,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKey))
           :asset="item.asset"
           :size="thumbSize"
           :selected="preview.asset?.id === item.asset.id"
-          @click="(a) => preview.open(a, item.index)"
+          @click="(a) => preview.open(a, item.index, { forceImage: store.filter.type === 'image-all' && a.type !== 'image' })"
         />
       </div>
     </div>

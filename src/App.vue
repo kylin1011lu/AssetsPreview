@@ -19,8 +19,32 @@ import SpineViewer from '@/viewers/SpineViewer.vue'
 const store   = useAssetStore()
 const preview = usePreviewStore()
 
-const sidebarOpen = ref(true)
-const thumbSize   = ref<80 | 120 | 180>(120)
+const sidebarOpen  = ref(true)
+const thumbSize    = ref<80 | 120 | 180>(120)
+const sidebarWidth = ref(224) // px
+
+let resizing = false
+let resizeStartX = 0
+let resizeStartW = 0
+
+function onResizerDown(e: MouseEvent) {
+  resizing = true
+  resizeStartX = e.clientX
+  resizeStartW = sidebarWidth.value
+  document.addEventListener('mousemove', onResizerMove)
+  document.addEventListener('mouseup', onResizerUp)
+  e.preventDefault()
+}
+function onResizerMove(e: MouseEvent) {
+  if (!resizing) return
+  const next = resizeStartW + (e.clientX - resizeStartX)
+  sidebarWidth.value = Math.min(480, Math.max(120, next))
+}
+function onResizerUp() {
+  resizing = false
+  document.removeEventListener('mousemove', onResizerMove)
+  document.removeEventListener('mouseup', onResizerUp)
+}
 </script>
 
 <template>
@@ -28,6 +52,13 @@ const thumbSize   = ref<80 | 120 | 180>(120)
 
     <!-- ═══════════ TOP BAR ═══════════ -->
     <header class="flex items-center gap-3 px-4 py-2 bg-gray-900 border-b border-gray-800 flex-shrink-0 z-10">
+      <!-- Sidebar toggle (leftmost, next to sidebar edge) -->
+      <button class="btn-ghost flex-shrink-0" @click="sidebarOpen = !sidebarOpen">
+        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"/>
+        </svg>
+      </button>
+
       <!-- Logo + name -->
       <div class="flex items-center gap-2 flex-shrink-0">
         <svg class="w-6 h-6 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
@@ -46,13 +77,6 @@ const thumbSize   = ref<80 | 120 | 180>(120)
 
       <!-- Folder picker -->
       <FolderPicker />
-
-      <!-- Sidebar toggle -->
-      <button class="btn-ghost" @click="sidebarOpen = !sidebarOpen">
-        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-          <path fill-rule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"/>
-        </svg>
-      </button>
     </header>
 
     <!-- ═══════════ BODY ═══════════ -->
@@ -62,9 +86,15 @@ const thumbSize   = ref<80 | 120 | 180>(120)
       <Transition name="sidebar">
         <aside
           v-if="sidebarOpen"
-          class="w-56 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col overflow-hidden"
+          class="flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col overflow-hidden relative"
+          :style="{ width: sidebarWidth + 'px' }"
         >
           <DirTree class="flex-1" />
+          <!-- Resize handle -->
+          <div
+            class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-blue-500/40 active:bg-blue-500/60 transition-colors z-10"
+            @mousedown="onResizerDown"
+          />
         </aside>
       </Transition>
 

@@ -35,7 +35,7 @@ async function pickViaFSAPI() {
     history.value = loadHistory()
     await runScan(entries, rootPath)
   } catch (e: any) {
-    if (e?.name === 'AbortError') return  // user cancelled picker
+    if (e?.name === 'AbortError') { store.reset(); return }  // revert to idle so button re-enables
     store.setScanError(String(e?.message ?? e))
   }
 }
@@ -65,8 +65,7 @@ async function runScan(entries: ReturnType<typeof fromFileList>, rootPath: strin
   }
 }
 
-const progressPercent = () =>
-  store.scanTotal > 0 ? Math.round((store.scanProgress / store.scanTotal) * 100) : 0
+
 </script>
 
 <template>
@@ -92,17 +91,6 @@ const progressPercent = () =>
       class="hidden"
       @change="handleFileInput"
     />
-
-    <!-- Scanning progress -->
-    <div v-if="store.scanStatus === 'scanning'" class="flex items-center gap-2 text-sm text-gray-400">
-      <div class="w-32 h-1.5 bg-gray-700 rounded overflow-hidden">
-        <div
-          class="h-full bg-blue-500 transition-all duration-150"
-          :style="{ width: `${progressPercent()}%` }"
-        />
-      </div>
-      <span>{{ store.scanProgress.toLocaleString() }} 文件</span>
-    </div>
 
     <!-- Scan error -->
     <div v-if="store.scanStatus === 'error'" class="text-sm text-red-400">

@@ -16,8 +16,8 @@ const imgHeight  = ref(0)
 let blobUrl: string | null = null
 
 watch(
-  () => preview.asset,
-  async (asset) => {
+  [() => preview.asset, () => preview.forceImage],
+  async ([asset]) => {
     if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null }
     imgUrl.value   = null
     imgError.value = false
@@ -25,7 +25,10 @@ watch(
     imgHeight.value = 0
     if (!asset) return
     try {
-      const url = await createObjectURL(asset.mainFile)
+      const fileToLoad = (preview.forceImage && asset.type !== 'image')
+        ? (asset.files.find(f => f.name.endsWith('.png')) ?? asset.mainFile)
+        : asset.mainFile
+      const url = await createObjectURL(fileToLoad)
       blobUrl = url
       imgUrl.value = url
     } catch {
@@ -87,13 +90,13 @@ const assets = computed(() =>
 function prev() {
   const idx = preview.listIndex
   const all = store.filteredAssets
-  if (idx > 0) preview.open(all[idx - 1], idx - 1)
+  if (idx > 0) preview.open(all[idx - 1], idx - 1, { forceImage: preview.forceImage })
 }
 
 function next() {
   const idx = preview.listIndex
   const all = store.filteredAssets
-  if (idx < all.length - 1) preview.open(all[idx + 1], idx + 1)
+  if (idx < all.length - 1) preview.open(all[idx + 1], idx + 1, { forceImage: preview.forceImage })
 }
 
 function hasPrev() { return preview.listIndex > 0 }
@@ -124,11 +127,13 @@ function formatSize(bytes: number): string {
   <Teleport to="body">
     <Transition name="fade">
       <div
-        v-if="preview.visible && preview.asset?.type === 'image'"
+        v-if="preview.visible && (preview.asset?.type === 'image' || preview.forceImage)"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
         @click.self="preview.close"
       >
-        <div class="relative flex flex-col bg-gray-900 rounded-xl shadow-2xl overflow-hidden max-w-[90vw] max-h-[90vh] w-auto">
+        <div class="relative flex flex-col bg-gray-900 rounded-xl shadow-2xl overflow-hidden"
+          style="width: 92vw; height: 92vh; max-width: 1400px;"
+        >
           <!-- Header -->
           <div class="flex items-center justify-between px-4 py-2 border-b border-gray-700 flex-shrink-0">
             <div class="flex items-center gap-3">
@@ -156,7 +161,6 @@ function formatSize(bytes: number): string {
           <!-- Image canvas -->
           <div
             class="relative overflow-hidden flex-1 min-h-0 cursor-grab select-none"
-            style="min-width: 400px; min-height: 300px;"
             :style="{
               backgroundImage: 'repeating-conic-gradient(#374151 0% 25%, #1f2937 0% 50%)',
               backgroundSize: '16px 16px',

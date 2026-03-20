@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import type { DirNode } from '@/types'
 import { useAssetStore } from '@/stores/assetStore'
+import { usePreviewStore } from '@/stores/previewStore'
 
 const props = defineProps<{
   node: DirNode
@@ -9,10 +10,29 @@ const props = defineProps<{
 }>()
 
 const store = useAssetStore()
+const preview = usePreviewStore()
 const depth = computed(() => props.depth ?? 0)
 const expanded = ref(depth.value < 2)
 const isActive = computed(() => store.currentDirPath === props.node.relPath)
 const hasChildren = computed(() => props.node.children.length > 0)
+const hasActiveAsset = computed(() => preview.asset?.relDirPath === props.node.relPath)
+const rowRef = ref<HTMLElement | null>(null)
+
+watch(
+  () => preview.asset?.relDirPath,
+  (relDirPath) => {
+    if (!relDirPath && relDirPath !== '') return
+    // Auto-expand if the active asset is anywhere in this subtree
+    if (relDirPath === props.node.relPath || relDirPath.startsWith(props.node.relPath + '/')) {
+      expanded.value = true
+    }
+    // Scroll into view if this is the exact containing folder
+    if (relDirPath === props.node.relPath) {
+      nextTick(() => rowRef.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+    }
+  },
+  { immediate: true }
+)
 
 function toggle() {
   if (hasChildren.value) expanded.value = !expanded.value
@@ -23,6 +43,7 @@ function toggle() {
 <template>
   <div>
     <div
+      ref="rowRef"
       class="flex items-center gap-1 py-0.5 px-2 rounded cursor-pointer text-sm select-none group"
       :class="[
         isActive
@@ -55,6 +76,8 @@ function toggle() {
         v-if="node.totalAssets > 0"
         class="text-xs text-gray-500 group-hover:text-gray-400"
       >{{ node.totalAssets }}</span>
+      <!-- Active asset indicator dot -->
+      <span v-if="hasActiveAsset" class="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0" />
     </div>
 
     <!-- Children -->

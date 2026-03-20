@@ -1,10 +1,23 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useAssetStore } from '@/stores/assetStore'
+import { usePreviewStore } from '@/stores/previewStore'
 import DirTreeNode from './DirTreeNode.vue'
 
 const store = useAssetStore()
+const preview = usePreviewStore()
 const tree = computed(() => store.dirTree)
+const rootRowRef = ref<HTMLElement | null>(null)
+const rootHasActiveAsset = computed(() => preview.asset?.relDirPath === '')
+
+watch(
+  () => preview.asset?.relDirPath,
+  (relDirPath) => {
+    if (relDirPath === '') {
+      nextTick(() => rootRowRef.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+    }
+  }
+)
 </script>
 
 <template>
@@ -12,6 +25,7 @@ const tree = computed(() => store.dirTree)
     <template v-if="tree">
       <!-- Root node (show all) -->
       <div
+        ref="rootRowRef"
         class="flex items-center gap-1 py-0.5 px-2 rounded cursor-pointer text-sm select-none"
         :class="[
           store.currentDirPath === ''
@@ -25,6 +39,7 @@ const tree = computed(() => store.dirTree)
         </svg>
         <span class="flex-1 truncate font-medium">{{ store.rootDirName }}</span>
         <span class="text-xs text-gray-500">{{ tree.totalAssets }}</span>
+        <span v-if="rootHasActiveAsset" class="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0" />
       </div>
 
       <DirTreeNode
