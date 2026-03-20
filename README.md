@@ -2,6 +2,8 @@
 
 一个**纯前端**游戏资源预览工具，无需后端服务、无需安装，直接在浏览器中读取本地游戏资源文件夹，实现全类型资源的可视化浏览与播放。
 
+**🔗 在线体验：[https://www.youxiheai.xin/project/asset-viewer](https://www.youxiheai.xin/project/asset-viewer)**
+
 ## 功能特性
 
 | 资源类型 | 支持能力 |
