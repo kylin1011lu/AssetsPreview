@@ -21,7 +21,15 @@ Thumbs.db
 .idea/
 .vscode/extensions.json
 
-# Temp files
+# Temp / debug output directory (never commit)
+temp/
+
+# Backup and scratch files (never commit)
+*.bak
+*.new
+*.tmp
+
+# Leftover build capture files
 build_out.txt
 build_err.txt
 
