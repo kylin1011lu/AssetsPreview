@@ -170,6 +170,9 @@ onMounted(() => {
 onUnmounted(() => {
   observer?.disconnect()
   if (objectUrl) URL.revokeObjectURL(objectUrl)
+  if (audioBlobUrl) URL.revokeObjectURL(audioBlobUrl)
+  audioEl?.pause()
+  audioEl = null
   if (hoverTimer) clearTimeout(hoverTimer)
   document.removeEventListener('click', onDocClick, true)
   document.removeEventListener('keydown', onDocKeydown)
@@ -177,6 +180,32 @@ onUnmounted(() => {
 
 // ---- audio icon placeholder ----
 const AUDIO_ICON = `<svg viewBox="0 0 24 24" fill="currentColor" class="w-8 h-8 text-green-400"><path d="M9 18V5l12-2v13M9 18c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-2c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"/></svg>`
+
+// ---- inline audio playback ----
+const audioPlaying = ref(false)
+let audioEl: HTMLAudioElement | null = null
+let audioBlobUrl: string | null = null
+
+async function toggleAudioPlay(e: MouseEvent) {
+  e.stopPropagation()
+  if (props.asset.type !== 'audio') return
+  if (audioPlaying.value && audioEl) {
+    audioEl.pause()
+    return
+  }
+  if (!audioBlobUrl) {
+    try {
+      audioBlobUrl = await createObjectURL(props.asset.mainFile)
+    } catch { return }
+  }
+  if (!audioEl) {
+    audioEl = new Audio(audioBlobUrl)
+    audioEl.addEventListener('ended', () => { audioPlaying.value = false })
+    audioEl.addEventListener('pause', () => { audioPlaying.value = false })
+    audioEl.addEventListener('play',  () => { audioPlaying.value = true  })
+  }
+  audioEl.play()
+}
 
 // Format bytes
 function formatSize(bytes: number): string {
@@ -238,6 +267,26 @@ const thumbStyle = computed(() => ({
         class="relative flex flex-col items-center gap-1"
         v-html="AUDIO_ICON"
       />
+
+      <!-- Audio play button overlay -->
+      <button
+        v-if="asset.type === 'audio'"
+        class="absolute inset-0 flex items-center justify-center transition-opacity"
+        :class="audioPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+        :title="audioPlaying ? '暂停' : '播放'"
+        @click="toggleAudioPlay"
+      >
+        <span class="flex items-center justify-center w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-sm transition-colors">
+          <!-- Play -->
+          <svg v-if="!audioPlaying" class="w-5 h-5 text-white translate-x-0.5" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/>
+          </svg>
+          <!-- Pause -->
+          <svg v-else class="w-5 h-5 text-white" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v4a1 1 0 11-2 0V8z" clip-rule="evenodd"/>
+          </svg>
+        </span>
+      </button>
 
       <!-- TTF font placeholder -->
       <div

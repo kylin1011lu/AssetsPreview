@@ -157,6 +157,31 @@ export async function scanEntries(
       tick(files.length)
     }
 
+    // ---- 2b. Spine binary triplets (.skel) ----
+    for (const f of dirFiles) {
+      if (ext(f.name) !== '.atlas') continue
+      if (consumed.has(f.path)) continue // already matched by JSON pass
+      const base = baseName(f.name)
+      const skelFile = byName.get(`${base}.skel`)
+      if (!skelFile || consumed.has(skelFile.path)) continue
+
+      const pngFile = byName.get(`${base}.png`)
+      const files: FileEntry[] = [skelFile, f]
+      if (pngFile && !consumed.has(pngFile.path)) files.push(pngFile)
+
+      appendAsset(assets, consumed, {
+        id: nextId(),
+        name: base,
+        type: 'spine',
+        dirPath: f.dirPath,
+        relDirPath: f.relPath.includes('/') ? f.relPath.slice(0, f.relPath.lastIndexOf('/')) : '',
+        mainFile: skelFile,
+        files,
+        totalSize: files.reduce((s, x) => s + x.size, 0),
+      })
+      tick(files.length)
+    }
+
     // ---- 3. Plist atlas ----
     for (const f of dirFiles) {
       if (ext(f.name) !== '.plist') continue

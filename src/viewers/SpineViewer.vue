@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onUnmounted, nextTick } from 'vue'
 import { usePreviewStore } from '@/stores/previewStore'
-import { readFileAsText, createObjectURL } from '@/core/fileReader'
+import { readFileAsText, readFileAsArrayBuffer, createObjectURL } from '@/core/fileReader'
 import type { SpineInfo } from '@/types'
 import * as PIXI from 'pixi.js'
 import { TextureAtlas } from '@pixi-spine/base'
@@ -26,15 +26,17 @@ const playSpeed    = ref(1)
 const bgColor      = ref('#1a1a2e')
 const pmaEnabled   = ref(false)
 const containerRef = ref<HTMLDivElement | null>(null)
-const debugLog     = ref<string[]>([])
-const showDebug    = ref(false)
 
 let pixiApp: PIXI.Application | null = null
 let spineObj: any = null
+let viewport: PIXI.Container | null = null
+let cleanupEvents: (() => void) | null = null
 let objectUrls: string[] = []
 
 let savedRawData: {
-  skeJson: any
+  skeJson?: any            // JSON format
+  skelBuffer?: ArrayBuffer // binary .skel format
+  isBinary: boolean
   atlasText: string
   pngBlobUrls: Record<string, string>
   animList: string[]
@@ -43,15 +45,28 @@ let savedRawData: {
   verEnum: SPINE_VERSION
 } | null = null
 
-function dbg(...args: any[]) {
-  const msg = args.map(a =>
-    a === null ? 'null' :
-    a === undefined ? 'undefined' :
-    typeof a === 'object' ? JSON.stringify(a) : String(a)
-  ).join(' ')
-  console.log('[SpineViewer]', msg)
-  debugLog.value.push(msg)
-  if (debugLog.value.length > 80) debugLog.value.shift()
+// Read the version string out of a .skel binary header (hash string, then version string).
+// Spine stores strings as: varint(actualLen+1), then bytes (0 = null)
+function readVersionFromSkelBinary(buffer: ArrayBuffer): string {
+  try {
+    const bytes = new Uint8Array(buffer)
+    let offset = 0
+    function readVarInt(): number {
+      let result = 0, shift = 0, b: number
+      do { b = bytes[offset++]; result |= (b & 0x7F) << shift; shift += 7 } while (b & 0x80)
+      return result
+    }
+    function skipString() { const n = readVarInt(); if (n > 0) offset += n - 1 }
+    function readString(): string {
+      const n = readVarInt()
+      if (n === 0) return ''
+      const s = new TextDecoder().decode(new Uint8Array(buffer, offset, n - 1))
+      offset += n - 1
+      return s
+    }
+    skipString() // hash
+    return readString() // version
+  } catch { return '4.0.0' }
 }
 
 function getRuntime(ver: SPINE_VERSION) {
@@ -73,12 +88,12 @@ async function buildSpineScene() {
   const data = savedRawData
   if (!data || !containerRef.value) return
 
+  cleanupEvents?.(); cleanupEvents = null; viewport = null
   if (spineObj) { try { spineObj.destroy() } catch {} spineObj = null }
   if (pixiApp) { try { pixiApp.destroy(true, { children: true }) } catch {} pixiApp = null }
 
   const cw = containerRef.value.clientWidth  || 600
   const ch = containerRef.value.clientHeight || 500
-  dbg('buildSpineScene: container=', cw, 'x', ch, 'pma=', pmaEnabled.value)
 
   pixiApp = new PIXI.Application({
     width: cw,
@@ -94,10 +109,7 @@ async function buildSpineScene() {
     new TextureAtlas(data.atlasText,
       (pageName: string, loaderFn: (tex: PIXI.BaseTexture) => void) => {
         const blobUrl = data.pngBlobUrls[pageName]
-        if (!blobUrl) {
-          dbg('ERROR: atlas page not found:', pageName, '| available:', Object.keys(data.pngBlobUrls))
-          return
-        }
+        if (!blobUrl) return
         const baseTex = PIXI.BaseTexture.from(blobUrl, {
           alphaMode: pmaEnabled.value ? PIXI.ALPHA_MODES.PREMULTIPLIED_ALPHA : PIXI.ALPHA_MODES.UNPACK,
         })
@@ -105,7 +117,6 @@ async function buildSpineScene() {
           loaderFn(baseTex)
         } else {
           baseTex.once('loaded', () => loaderFn(baseTex))
-          baseTex.once('error', () => { dbg('ERROR: texture load failed:', pageName) })
         }
       },
       (completedAtlas: TextureAtlas) => {
@@ -118,24 +129,90 @@ async function buildSpineScene() {
   if (!runtime) throw new Error(`不支持的 Spine 版本: ${data.version}`)
 
   const attachmentLoader = new (runtime as any).AtlasAttachmentLoader(atlas)
-  const jsonParser = new (runtime as any).SkeletonJson(attachmentLoader)
-  jsonParser.scale = 1.0
-  const skeletonData = jsonParser.readSkeletonData(data.skeJson)
-  dbg('skeletonData: bones=', skeletonData.bones?.length, 'anims=', skeletonData.animations?.length)
+  let skeletonData: any
+  if (data.isBinary) {
+    const binaryParser = new (runtime as any).SkeletonBinary(attachmentLoader)
+    binaryParser.scale = 1.0
+    skeletonData = binaryParser.readSkeletonData(new Uint8Array(data.skelBuffer!))
+    // Update metadata from parsed result (only available after parsing binary)
+    const anims: string[] = skeletonData.animations.map((a: any) => a.name)
+    const skinNames: string[] = skeletonData.skins.map((s: any) => s.name).filter(Boolean)
+    if (skinNames.length === 0) skinNames.push('default')
+    animations.value  = anims
+    skins.value       = skinNames
+    currentAnim.value = currentAnim.value || anims[0] || ''
+    currentSkin.value = currentSkin.value || skinNames[0] || 'default'
+    spineInfo.value   = { version: skeletonData.version || data.version, animationNames: anims, skinNames }
+    data.animList = anims
+    data.skinList = skinNames
+  } else {
+    const jsonParser = new (runtime as any).SkeletonJson(attachmentLoader)
+    jsonParser.scale = 1.0
+    skeletonData = jsonParser.readSkeletonData(data.skeJson)
+  }
 
   spineObj = new Spine(skeletonData)
   spineObj.autoUpdate = true
-  spineObj.x = cw / 2
-  spineObj.y = ch * 0.75
 
   const bounds = spineObj.getLocalBounds()
   const bw = bounds.width || 1
   const bh = bounds.height || 1
   const fitScale = Math.min((cw * 0.85) / bw, (ch * 0.85) / bh, 2)
   spineObj.scale.set(fitScale)
-  dbg('bounds:', bw.toFixed(0), 'x', bh.toFixed(0), '-> fitScale:', fitScale.toFixed(3))
 
-  pixiApp.stage.addChild(spineObj)
+  // Center: place bounds center at canvas center
+  spineObj.x = cw / 2 - (bounds.x + bw / 2) * fitScale
+  spineObj.y = ch / 2 - (bounds.y + bh / 2) * fitScale
+
+  viewport = new PIXI.Container()
+  viewport.addChild(spineObj)
+  pixiApp.stage.addChild(viewport)
+
+  // Drag & zoom
+  const canvas = pixiApp.view as HTMLCanvasElement
+  canvas.style.cursor = 'grab'
+  let dragging = false
+  let dragLast = { x: 0, y: 0 }
+
+  const onWheel = (e: WheelEvent) => {
+    e.preventDefault()
+    const rect = canvas.getBoundingClientRect()
+    const mx = e.clientX - rect.left
+    const my = e.clientY - rect.top
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+    const cur = viewport!.scale.x
+    const next = Math.min(10, Math.max(0.05, cur * factor))
+    viewport!.x = mx + (viewport!.x - mx) * (next / cur)
+    viewport!.y = my + (viewport!.y - my) * (next / cur)
+    viewport!.scale.set(next)
+  }
+  const onDown = (e: MouseEvent) => {
+    dragging = true
+    dragLast = { x: e.clientX, y: e.clientY }
+    canvas.style.cursor = 'grabbing'
+  }
+  const onMove = (e: MouseEvent) => {
+    if (!dragging) return
+    viewport!.x += e.clientX - dragLast.x
+    viewport!.y += e.clientY - dragLast.y
+    dragLast = { x: e.clientX, y: e.clientY }
+  }
+  const onUp = () => { dragging = false; canvas.style.cursor = 'grab' }
+  const onDblClick = () => { viewport!.x = 0; viewport!.y = 0; viewport!.scale.set(1) }
+
+  canvas.addEventListener('wheel', onWheel, { passive: false })
+  canvas.addEventListener('mousedown', onDown)
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+  canvas.addEventListener('dblclick', onDblClick)
+
+  cleanupEvents = () => {
+    canvas.removeEventListener('wheel', onWheel)
+    canvas.removeEventListener('mousedown', onDown)
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    canvas.removeEventListener('dblclick', onDblClick)
+  }
 
   const skinName = data.skinList[0] || 'default'
   try {
@@ -145,7 +222,6 @@ async function buildSpineScene() {
 
   if (data.animList.length > 0) {
     spineObj.state.setAnimation(0, data.animList[0], true)
-    dbg('playing:', data.animList[0])
   }
 
   spineObj.state.timeScale = playSpeed.value
@@ -167,60 +243,66 @@ watch(
 
     if (!asset || asset.type !== 'spine') return
 
-    debugLog.value = []
-    dbg('=== loading asset:', asset.name, '===')
     loading.value = true
     try {
       const jsonFile  = asset.files.find(f => f.name.endsWith('.json'))
+      const skelFile  = asset.files.find(f => f.name.endsWith('.skel'))
       const atlasFile = asset.files.find(f => f.name.endsWith('.atlas'))
       const pngFiles  = asset.files.filter(f => f.name.endsWith('.png'))
+      const isBinary  = !jsonFile && !!skelFile
+      const skelSource = jsonFile ?? skelFile
 
-      if (!jsonFile || !atlasFile || pngFiles.length === 0) {
-        dbg('ERROR: missing files')
-        error.value = '缺少配对文件 (.json / .atlas / .png)'
+      if (!skelSource || !atlasFile || pngFiles.length === 0) {
+        error.value = '缺少配对文件 (.json/.skel / .atlas / .png)'
         return
       }
-      dbg('json:', jsonFile.name, 'atlas:', atlasFile.name, 'pngs:', pngFiles.map(f => f.name))
 
-      const [jsonText, atlasText] = await Promise.all([
-        readFileAsText(jsonFile),
-        readFileAsText(atlasFile),
-      ])
+      const atlasText = await readFileAsText(atlasFile)
 
       let skeJson: any
-      try { skeJson = JSON.parse(jsonText) } catch {
-        error.value = '无效的 JSON 骨骼文件'
-        return
-      }
-
-      const version = skeJson?.skeleton?.spine || '4.0.0'
-      const verEnum = detectSpineVersion(version)
-      dbg('version:', version, 'verEnum:', verEnum)
-
-      if (verEnum === SPINE_VERSION.UNKNOWN) {
-        dbg('WARNING: unknown spine version, will try 4.1 runtime')
-        versionWarn.value = `未知 Spine 版本 ${version}，将尝试 4.1 运行时`
-      }
-
-      const animList = Object.keys(skeJson?.animations || {})
-      const rawSkins = skeJson?.skins
+      let skelBuffer: ArrayBuffer | undefined
+      let version: string
+      let verEnum: SPINE_VERSION
+      let animList: string[]
       let skinList: string[]
-      if (Array.isArray(rawSkins)) {
-        skinList = rawSkins.map((s: any) => (typeof s === 'string' ? s : s.name)).filter(Boolean)
-      } else if (rawSkins && typeof rawSkins === 'object') {
-        skinList = Object.keys(rawSkins)
-      } else {
+
+      if (isBinary) {
+        skelBuffer = await readFileAsArrayBuffer(skelFile!)
+        version    = readVersionFromSkelBinary(skelBuffer)
+        verEnum    = detectSpineVersion(version)
+        if (verEnum === SPINE_VERSION.UNKNOWN) {
+          versionWarn.value = `未知 Spine 版本 ${version}，将尝试 4.1 运行时`
+        }
+        // animations/skins extracted after parsing in buildSpineScene
+        animList = []
         skinList = []
+      } else {
+        const jsonText = await readFileAsText(jsonFile!)
+        try { skeJson = JSON.parse(jsonText) } catch {
+          error.value = '无效的 JSON 骨骼文件'
+          return
+        }
+        version = skeJson?.skeleton?.spine || '4.0.0'
+        verEnum = detectSpineVersion(version)
+        if (verEnum === SPINE_VERSION.UNKNOWN) {
+          versionWarn.value = `未知 Spine 版本 ${version}，将尝试 4.1 运行时`
+        }
+        animList = Object.keys(skeJson?.animations || {})
+        const rawSkins = skeJson?.skins
+        if (Array.isArray(rawSkins)) {
+          skinList = rawSkins.map((s: any) => (typeof s === 'string' ? s : s.name)).filter(Boolean)
+        } else if (rawSkins && typeof rawSkins === 'object') {
+          skinList = Object.keys(rawSkins)
+        } else {
+          skinList = []
+        }
+        if (!skinList.includes('default')) skinList.unshift('default')
+        spineInfo.value   = { version, animationNames: animList, skinNames: skinList }
+        animations.value  = animList
+        skins.value       = skinList
+        currentAnim.value = animList[0] || ''
+        currentSkin.value = skinList[0] || 'default'
       }
-      if (!skinList.includes('default')) skinList.unshift('default')
-
-      dbg('animList:', animList, 'skinList:', skinList)
-
-      spineInfo.value   = { version, animationNames: animList, skinNames: skinList }
-      animations.value  = animList
-      skins.value       = skinList
-      currentAnim.value = animList[0] || ''
-      currentSkin.value = skinList[0] || 'default'
 
       const pngBlobUrls: Record<string, string> = {}
       for (const pf of pngFiles) {
@@ -229,16 +311,14 @@ watch(
         pngBlobUrls[pf.name] = url
       }
 
-      savedRawData = { skeJson, atlasText, pngBlobUrls, animList, skinList, version, verEnum }
+      savedRawData = { skeJson, skelBuffer, isBinary, atlasText, pngBlobUrls, animList, skinList, version, verEnum }
 
       await nextTick()
       await new Promise(r => setTimeout(r, 60))
       if (!containerRef.value) { error.value = '容器未挂载'; return }
 
       await buildSpineScene()
-      dbg('=== loaded successfully ===')
     } catch (e: any) {
-      dbg('ERROR:', e?.message || String(e))
       error.value = e?.message || String(e)
     } finally {
       loading.value = false
@@ -250,12 +330,10 @@ watch(
 // ---- PMA toggle -> rebuild scene ----
 watch(pmaEnabled, async () => {
   if (!savedRawData || !containerRef.value) return
-  dbg('PMA toggled to', pmaEnabled.value, '-> rebuilding')
   PIXI.utils.clearTextureCache()
   try {
     await buildSpineScene()
   } catch (e: any) {
-    dbg('ERROR on PMA rebuild:', e?.message)
     error.value = e?.message || String(e)
   }
 })
@@ -268,9 +346,7 @@ function playAnim(name: string) {
     spineObj.state.setAnimation(0, name, true)
     spineObj.state.timeScale = playSpeed.value
     isPlaying.value = true
-  } catch (e: any) {
-    dbg('playAnim error:', e?.message)
-  }
+  } catch {}
 }
 
 function setSkin(name: string) {
@@ -279,9 +355,7 @@ function setSkin(name: string) {
   try {
     spineObj.skeleton.setSkinByName(name)
     spineObj.skeleton.setSlotsToSetupPose()
-  } catch (e: any) {
-    dbg('setSkin error:', e?.message)
-  }
+  } catch {}
 }
 
 function togglePlay() {
@@ -308,6 +382,7 @@ watch(bgColor, (c) => {
 
 // ---- Cleanup ----
 function destroyAll() {
+  cleanupEvents?.(); cleanupEvents = null; viewport = null
   if (spineObj) { try { spineObj.destroy() } catch {} spineObj = null }
   if (pixiApp) { try { pixiApp.destroy(true, { children: true }) } catch {} pixiApp = null }
   PIXI.utils.clearTextureCache()
@@ -363,6 +438,7 @@ onUnmounted(destroyAll)
                 <div class="w-8 h-8 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
               </div>
               <div ref="containerRef" class="w-full h-full" />
+              <div class="absolute bottom-2 right-2 text-xs text-gray-600 pointer-events-none select-none">拖拽移动 · 滚轮缩放 · 双击重置</div>
             </div>
 
             <!-- Right panel -->
@@ -444,22 +520,7 @@ onUnmounted(destroyAll)
                 </div>
               </div>
 
-              <!-- Debug panel -->
-              <div class="p-3">
-                <button
-                  class="text-xs text-gray-600 hover:text-gray-400 flex items-center gap-1"
-                  @click="showDebug = !showDebug"
-                >🐛 调试日志 {{ showDebug ? '▲' : '▼' }}</button>
-                <div v-if="showDebug" class="mt-2 max-h-56 overflow-y-auto flex flex-col gap-0.5">
-                  <p v-if="debugLog.length === 0" class="text-xs text-gray-600">（无日志）</p>
-                  <p
-                    v-for="(line, i) in debugLog"
-                    :key="i"
-                    class="text-xs font-mono break-all leading-4"
-                    :class="line.includes('ERROR') ? 'text-red-400' : line.includes('WARNING') ? 'text-yellow-400' : line.includes('successfully') ? 'text-green-400' : 'text-gray-500'"
-                  >{{ line }}</p>
-                </div>
-              </div>
+
             </div>
           </div>
         </div>

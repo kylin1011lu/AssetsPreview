@@ -32,6 +32,8 @@ const canvasRef     = ref<HTMLDivElement | null>(null)
 
 let pixiApp:    PIXI.Application | null = null
 let armDisplay: any = null
+let viewport:   PIXI.Container | null = null
+let cleanupEvents: (() => void) | null = null
 let objectUrls: string[] = []
 
 // ---- Main load ----
@@ -133,10 +135,26 @@ async function initPixi(
   armDisplay = factory.buildArmatureDisplay(armatureName)
   if (!armDisplay) { error.value = '无法创建 Armature'; return }
 
-  armDisplay.x = w / 2
-  armDisplay.y = h * 0.65
+  // Auto-fit and center using local bounds
+  armDisplay.x = 0
+  armDisplay.y = 0
   armDisplay.scale.set(1)
-  pixiApp.stage.addChild(armDisplay)
+  const lb = armDisplay.getLocalBounds()
+  const bw = lb.width  || w * 0.8
+  const bh = lb.height || h * 0.8
+  const fitScale = Math.min((w * 0.85) / bw, (h * 0.85) / bh, 2)
+  armDisplay.scale.set(fitScale)
+  if (lb.width > 0 && lb.height > 0) {
+    armDisplay.x = w / 2 - (lb.x + bw / 2) * fitScale
+    armDisplay.y = h / 2 - (lb.y + bh / 2) * fitScale
+  } else {
+    armDisplay.x = w / 2
+    armDisplay.y = h / 2
+  }
+
+  viewport = new PIXI.Container()
+  viewport.addChild(armDisplay)
+  pixiApp.stage.addChild(viewport)
 
   if (animName) {
     armDisplay.animation.play(animName)
@@ -146,6 +164,52 @@ async function initPixi(
   pixiApp.ticker.add(() => {
     PixiFactory.advanceTime(pixiApp!.ticker.deltaMS / 1000 * playSpeed.value)
   })
+
+  // Drag & zoom
+  const canvas = pixiApp.view as HTMLCanvasElement
+  canvas.style.cursor = 'grab'
+  let dragging = false
+  let dragLast = { x: 0, y: 0 }
+
+  const onWheel = (e: WheelEvent) => {
+    e.preventDefault()
+    const rect = canvas.getBoundingClientRect()
+    const mx = e.clientX - rect.left
+    const my = e.clientY - rect.top
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+    const cur = viewport!.scale.x
+    const next = Math.min(10, Math.max(0.05, cur * factor))
+    viewport!.x = mx + (viewport!.x - mx) * (next / cur)
+    viewport!.y = my + (viewport!.y - my) * (next / cur)
+    viewport!.scale.set(next)
+  }
+  const onDown = (e: MouseEvent) => {
+    dragging = true
+    dragLast = { x: e.clientX, y: e.clientY }
+    canvas.style.cursor = 'grabbing'
+  }
+  const onMove = (e: MouseEvent) => {
+    if (!dragging) return
+    viewport!.x += e.clientX - dragLast.x
+    viewport!.y += e.clientY - dragLast.y
+    dragLast = { x: e.clientX, y: e.clientY }
+  }
+  const onUp = () => { dragging = false; canvas.style.cursor = 'grab' }
+  const onDblClick = () => { viewport!.x = 0; viewport!.y = 0; viewport!.scale.set(1) }
+
+  canvas.addEventListener('wheel', onWheel, { passive: false })
+  canvas.addEventListener('mousedown', onDown)
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+  canvas.addEventListener('dblclick', onDblClick)
+
+  cleanupEvents = () => {
+    canvas.removeEventListener('wheel', onWheel)
+    canvas.removeEventListener('mousedown', onDown)
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    canvas.removeEventListener('dblclick', onDblClick)
+  }
 }
 
 // ---- Controls ----
@@ -177,6 +241,7 @@ watch(bgColor, (c) => {
 
 // ---- Cleanup ----
 function destroyPixi() {
+  cleanupEvents?.(); cleanupEvents = null; viewport = null
   if (armDisplay) {
     try {
       PixiFactory.factory.clear(true)
@@ -238,6 +303,7 @@ onUnmounted(destroyPixi)
                 class="w-full h-full"
                 :style="{ background: bgColor }"
               />
+              <div class="absolute bottom-2 right-2 text-xs text-gray-600 pointer-events-none select-none">拖拽移动 · 滚轮缩放 · 双击重置</div>
             </div>
 
             <!-- Right panel: controls -->
