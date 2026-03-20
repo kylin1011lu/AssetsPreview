@@ -12,9 +12,9 @@
 import { ref, watch, onUnmounted } from 'vue'
 import { usePreviewStore } from '@/stores/previewStore'
 import { readFileAsText, createObjectURL } from '@/core/fileReader'
-import { loadScript } from '@/utils/scriptLoader'
 import type { DragonBonesInfo } from '@/types'
 import * as PIXI from 'pixi.js'
+import { PixiFactory } from '@md5crypt/dragonbones-pixi'
 
 const preview = usePreviewStore()
 
@@ -34,27 +34,10 @@ let pixiApp:    PIXI.Application | null = null
 let armDisplay: any = null
 let objectUrls: string[] = []
 
-// DragonBones CDN URLs to try (most likely to least likely)
-const DB_SCRIPT_URLS = [
-  '/vendor/dragonbones-pixi.js',
-  'https://cdn.jsdelivr.net/gh/DragonBones/DragonBonesJS@5.7.001/Pixi/out/DragonBonesPixi.min.js',
-]
-
-async function ensureRuntime(): Promise<boolean> {
-  if ((window as any).dragonBones) { runtimeReady.value = true; return true }
-  for (const url of DB_SCRIPT_URLS) {
-    try {
-      await loadScript(url)
-      if ((window as any).dragonBones) { runtimeReady.value = true; return true }
-    } catch { /* try next */ }
-  }
-  return false
-}
-
 // ---- Main load ----
 watch(
-  () => preview.asset,
-  async (asset) => {
+  [() => preview.asset, () => preview.openSerial],
+  async ([asset]) => {
     destroyPixi()
     error.value   = ''
     dbInfo.value  = null
@@ -63,13 +46,8 @@ watch(
     if (!asset || asset.type !== 'dragonbones') return
 
     loading.value = true
+    runtimeReady.value = true
     try {
-      const ok = await ensureRuntime()
-      if (!ok) {
-        error.value = '无法加载 DragonBones 运行时。请将 dragonbones-pixi.js 放入 public/vendor/ 目录。'
-        return
-      }
-
       const skeFile  = asset.files.find(f => f.name.endsWith('_ske.json'))
       const texJFile = asset.files.find(f => f.name.endsWith('_tex.json'))
       const texPFile = asset.files.find(f => f.name.endsWith('_tex.png'))
@@ -131,7 +109,6 @@ async function initPixi(
   animName?: string,
 ) {
   if (!canvasRef.value) return
-  const db = (window as any).dragonBones
 
   const w = canvasRef.value.clientWidth  || 600
   const h = canvasRef.value.clientHeight || 500
@@ -146,10 +123,10 @@ async function initPixi(
   })
   canvasRef.value.appendChild(pixiApp.view as HTMLCanvasElement)
 
-  // Load texture
-  const texture = await PIXI.Assets.load(texPngUrl)
+  // Load texture via Texture.fromURL — bypasses Assets parser detection (blob URLs have no extension)
+  const texture = await PIXI.Texture.fromURL(texPngUrl)
 
-  const factory = db.PixiFactory.factory
+  const factory = PixiFactory.factory
   factory.parseDragonBonesData(skeJson)
   factory.parseTextureAtlasData(texJson, texture)
 
@@ -167,7 +144,7 @@ async function initPixi(
 
   isPlaying.value = true
   pixiApp.ticker.add(() => {
-    db.worldClock.advanceTime(pixiApp!.ticker.deltaMS / 1000 * playSpeed.value)
+    PixiFactory.advanceTime(pixiApp!.ticker.deltaMS / 1000 * playSpeed.value)
   })
 }
 
@@ -202,11 +179,7 @@ watch(bgColor, (c) => {
 function destroyPixi() {
   if (armDisplay) {
     try {
-      const db = (window as any).dragonBones
-      if (db?.PixiFactory?.factory) {
-        db.PixiFactory.factory.removeAllCachedDragonBonesData?.()
-        db.PixiFactory.factory.removeAllCachedTextureAtlasData?.()
-      }
+      PixiFactory.factory.clear(true)
     } catch {}
     armDisplay = null
   }

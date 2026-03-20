@@ -9,7 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@esotericsoftware/spine-player": "^4.2.107",
+    "@md5crypt/dragonbones-pixi": "^5.8.1",
     "fuse.js": "^7.0.0",
+    "jszip": "^3.10.1",
     "pinia": "^2.1.7",
     "pixi.js": "^7.4.3",
     "vue": "^3.4.0",

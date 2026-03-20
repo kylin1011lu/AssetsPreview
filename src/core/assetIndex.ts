@@ -6,7 +6,10 @@
  */
 
 import Fuse from 'fuse.js'
-import type { AssetItem, AssetType, FilterState, SortField, SortOrder } from '@/types'
+import type { AssetItem, AssetType, TypeFilter, FilterState, SortField, SortOrder } from '@/types'
+
+// Types counted as "all images" when 'image-all' filter is active
+const IMAGE_ALL_TYPES = new Set<AssetType>(['image', 'atlas', 'dragonbones', 'spine', 'fnt'])
 
 export class AssetIndex {
   private assets: AssetItem[] = []
@@ -84,10 +87,22 @@ export class AssetIndex {
       results = this.getByDirPrefix(relDirPath)
     }
 
-    // Type filter
-    if (filter.types.length > 0) {
-      const typeSet = new Set<AssetType>(filter.types)
-      results = results.filter(a => typeSet.has(a.type))
+    // Type filter (single-select)
+    if (filter.type !== null) {
+      if (filter.type === 'image-all') {
+        results = results.filter(a => IMAGE_ALL_TYPES.has(a.type))
+      } else {
+        results = results.filter(a => a.type === filter.type)
+      }
+    }
+
+    // Image extension sub-filter (applies to 'image' typed assets only)
+    if (filter.imageExt && (filter.type === 'image' || filter.type === 'image-all')) {
+      const ext = '.' + filter.imageExt.toLowerCase()
+      results = results.filter(a => {
+        if (a.type !== 'image') return true  // keep non-image assets in 'image-all' mode
+        return a.mainFile.name.toLowerCase().endsWith(ext)
+      })
     }
 
     // Sort
@@ -131,5 +146,16 @@ export class AssetIndex {
       counts[a.type] = (counts[a.type] ?? 0) + 1
     }
     return counts as Record<AssetType, number>
+  }
+
+  /** Returns sorted list of image file extensions for 'image' typed assets in the given dir. */
+  getImageExts(relDirPath = ''): string[] {
+    const items = this.getByDirPrefix(relDirPath).filter(a => a.type === 'image')
+    const exts = new Set<string>()
+    for (const a of items) {
+      const dot = a.mainFile.name.lastIndexOf('.')
+      if (dot >= 0) exts.add(a.mainFile.name.slice(dot + 1).toLowerCase())
+    }
+    return [...exts].sort()
   }
 }

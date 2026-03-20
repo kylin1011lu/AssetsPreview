@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import type { AssetItem, AssetType, ThumbnailSize } from '@/types'
 import { createObjectURL } from '@/core/fileReader'
+import { useAssetStore } from '@/stores/assetStore'
 
 // ---- Context menu ----
 const ctxVisible = ref(false)
@@ -38,6 +39,47 @@ async function copyRelPath() {
 async function copyFileName() {
   try { await navigator.clipboard.writeText(props.asset.name) } catch {}
   closeCtx()
+}
+
+const store = useAssetStore()
+
+// ---- Hover tooltip (1s delay) ----
+const tooltipVisible = ref(false)
+const tooltipX = ref(0)
+const tooltipY = ref(0)
+let hoverTimer: ReturnType<typeof setTimeout> | null = null
+
+function onMouseEnter(e: MouseEvent) {
+  tooltipX.value = e.clientX
+  tooltipY.value = e.clientY
+  hoverTimer = setTimeout(() => { tooltipVisible.value = true }, 1000)
+}
+
+function onMouseMove(e: MouseEvent) {
+  tooltipX.value = e.clientX
+  tooltipY.value = e.clientY
+}
+
+function onMouseLeave() {
+  if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null }
+  tooltipVisible.value = false
+}
+
+// ---- Open folder button ----
+const folderFeedback = ref(false)
+
+function absPath(relDir: string) {
+  const root = store.rootPath.replace(/[\/\\]$/, '')
+  return relDir ? `${root}/${relDir}` : root
+}
+
+async function openFolder(e: MouseEvent) {
+  e.stopPropagation()
+  try {
+    await navigator.clipboard.writeText(absPath(props.asset.relDirPath))
+    folderFeedback.value = true
+    setTimeout(() => { folderFeedback.value = false }, 1500)
+  } catch {}
 }
 
 // Close context menu on outside click / escape
@@ -128,6 +170,7 @@ onMounted(() => {
 onUnmounted(() => {
   observer?.disconnect()
   if (objectUrl) URL.revokeObjectURL(objectUrl)
+  if (hoverTimer) clearTimeout(hoverTimer)
   document.removeEventListener('click', onDocClick, true)
   document.removeEventListener('keydown', onDocKeydown)
 })
@@ -154,7 +197,7 @@ const thumbStyle = computed(() => ({
 <template>
   <div
     ref="containerRef"
-    class="flex flex-col rounded-lg overflow-hidden cursor-pointer border transition-all"
+    class="group flex flex-col rounded-lg overflow-hidden cursor-pointer border transition-all"
     :class="[
       selected
         ? 'border-blue-500 bg-gray-750'
@@ -163,6 +206,9 @@ const thumbStyle = computed(() => ({
     :style="cardStyle"
     @click="emit('click', asset)"
     @contextmenu="onContextMenu"
+    @mouseenter="onMouseEnter"
+    @mousemove="onMouseMove"
+    @mouseleave="onMouseLeave"
   >
     <!-- Thumbnail area -->
     <div
@@ -223,6 +269,20 @@ const thumbStyle = computed(() => ({
           <path fill-rule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clip-rule="evenodd"/>
         </svg>
       </div>
+
+      <!-- Open folder button (bottom-right corner) -->
+      <button
+        class="absolute bottom-1 right-1 w-6 h-6 flex items-center justify-center rounded bg-black/50 hover:bg-black/80 text-gray-300 hover:text-white transition-all opacity-0 group-hover:opacity-100 z-10"
+        :title="folderFeedback ? '路径已复制！' : '复制文件夹路径'"
+        @click="openFolder"
+      >
+        <svg v-if="!folderFeedback" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
+        </svg>
+        <svg v-else class="w-3.5 h-3.5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+        </svg>
+      </button>
     </div>
 
     <!-- Info area -->
@@ -262,6 +322,19 @@ const thumbStyle = computed(() => ({
         </svg>
         复制文件名
       </button>
+    </div>
+  </Teleport>
+
+  <!-- Hover tooltip -->
+  <Teleport to="body">
+    <div
+      v-if="tooltipVisible"
+      class="fixed z-[300] px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg shadow-2xl text-xs text-gray-200 max-w-sm pointer-events-none"
+      :style="{ left: (tooltipX + 14) + 'px', top: (tooltipY + 14) + 'px' }"
+    >
+      <div class="text-gray-400 mb-0.5 text-[10px] uppercase tracking-wide">路径</div>
+      <div class="break-all text-gray-100">{{ absPath(asset.relDirPath) + '/' + asset.name }}</div>
+      <div v-if="asset.totalSize" class="text-gray-500 mt-1">{{ formatSize(asset.totalSize) }}</div>
     </div>
   </Teleport>
 </template>

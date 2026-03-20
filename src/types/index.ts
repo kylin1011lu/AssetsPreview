@@ -11,6 +11,9 @@ export type AssetType =
   | 'ttf'          // TTF/OTF/WOFF font
   | 'fnt'          // BMFont bitmap font
 
+/** Virtual filter key: 'image-all' includes image+atlas+dragonbones+spine+fnt */
+export type TypeFilter = AssetType | 'image-all'
+
 export type SortField = 'name' | 'size' | 'mtime'
 export type SortOrder = 'asc' | 'desc'
 export type ViewMode = 'grid' | 'list'
@@ -86,7 +89,10 @@ export interface ScanResult {
 
 export interface FilterState {
   query: string
-  types: AssetType[]
+  /** Single-select type filter; null = show all */
+  type: TypeFilter | null
+  /** Extension sub-filter for image modes, e.g. 'png', 'jpg', '' = all */
+  imageExt: string
   sortField: SortField
   sortOrder: SortOrder
 }

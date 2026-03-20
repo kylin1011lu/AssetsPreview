@@ -43,12 +43,13 @@ function parsePlistXml(xml: string, fallbackImageName: string): AtlasData {
   const root = parseXmlDict(dictEl)
 
   // Structure: { metadata: {...}, frames: { "name": {...}, ... } }
-  const framesDict = root['frames'] as Record<string, Record<string, string>>
-  const metadata = root['metadata'] as Record<string, string> | undefined
+  const framesDict = root['frames'] as Record<string, Record<string, unknown>>
+  const metadata = root['metadata'] as Record<string, unknown> | undefined
 
   const imageName = (metadata?.['textureFileName'] as string) || fallbackImageName
-  const atlasWidth  = parseFloat((metadata?.['size'] ? parseSize(metadata['size'] as string).width  : 0).toString()) || 0
-  const atlasHeight = parseFloat((metadata?.['size'] ? parseSize(metadata['size'] as string).height : 0).toString()) || 0
+  const sizeStr   = metadata?.['size'] as string | undefined
+  const atlasWidth  = sizeStr ? parseSize(sizeStr).width  : 0
+  const atlasHeight = sizeStr ? parseSize(sizeStr).height : 0
 
   const frames: SpriteFrame[] = []
 
@@ -59,20 +60,27 @@ function parsePlistXml(xml: string, fallbackImageName: string): AtlasData {
   return { imageName, imageWidth: atlasWidth, imageHeight: atlasHeight, frames }
 }
 
-function parseXmlFrameData(name: string, fd: Record<string, string>): SpriteFrame {
-  // Plist XML stores geometry as string values
-  const textureRect    = parseRect(fd['textureRect'] || fd['frame'] || '{{0,0},{0,0}}')
-  const spriteOffset   = parsePoint(fd['spriteOffset'] || fd['offset'] || '{0,0}')
-  const spriteSize     = parseSize(fd['spriteSize'] || fd['sourceColorRect']?.split(',')?.[1] || `{${textureRect.width},${textureRect.height}}`)
-  const spriteSourceSize = parseSize(fd['spriteSourceSize'] || fd['sourceSize'] || `{${textureRect.width},${textureRect.height}}`)
-  const rotated = fd['textureRotated'] === 'true' || fd['rotated'] === 'true'
+function parseXmlFrameData(name: string, fd: Record<string, unknown>): SpriteFrame {
+  // Plist XML stores geometry as string values, booleans as actual booleans
+  const str = (key: string) => (fd[key] as string) || ''
+  const textureRect      = parseRect(str('textureRect') || str('frame') || '{{0,0},{0,0}}')
+  const spriteOffset     = parsePoint(str('spriteOffset') || str('offset') || '{0,0}')
+  // textureRotated comes from <true/> → boolean true at runtime, never the string 'true'
+  const rotated          = !!(fd['textureRotated'] || fd['rotated'])
+  // spriteSize = actual pixel dimensions of the sprite in its natural (unrotated) orientation
+  // Prefer the explicit spriteSize field; fall back to textureRect (swap if rotated)
+  const naturalW = rotated ? textureRect.height : textureRect.width
+  const naturalH = rotated ? textureRect.width  : textureRect.height
+  const spriteSize       = parseSize(str('spriteSize') || `{${naturalW},${naturalH}}`)
+  const spriteSourceSize = parseSize(str('spriteSourceSize') || str('sourceSize') || `{${naturalW},${naturalH}}`)
 
   return {
     name: stripExtension(name),
     x: textureRect.x,
     y: textureRect.y,
-    width:  rotated ? textureRect.height : textureRect.width,
-    height: rotated ? textureRect.width  : textureRect.height,
+    // Use spriteSize directly (as TextureSplit does), NOT textureRect-derived dimensions
+    width:  spriteSize.width,
+    height: spriteSize.height,
     sourceWidth:  spriteSourceSize.width,
     sourceHeight: spriteSourceSize.height,
     offsetX: spriteOffset.x,

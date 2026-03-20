@@ -1,101 +1,91 @@
 <script setup lang="ts">
-/**
- * SpineViewer.vue
- *
- * Renders Spine skeletal animations using spine-player (loaded dynamically).
- *
- * Version detection: reads json.skeleton.spine → picks matching runtime.
- *
- * Asset loading strategy:
- *   All asset data (JSON, atlas, PNG) is converted to base64 data URIs and
- *   passed via spine-player's rawDataURIs option so no server fetch is needed.
- *
- * Runtime loading order (per version):
- *   1. /vendor/spine-player-{major}.{minor}.js  (local offline vendor)
- *   2. EsotericSoftware CDN (online)
- */
 import { ref, watch, onUnmounted } from 'vue'
 import { usePreviewStore } from '@/stores/previewStore'
-import { readFileAsText } from '@/core/fileReader'
+import { readFileAsText, readFileAsBlob } from '@/core/fileReader'
 import { loadScript, blobToDataUrl } from '@/utils/scriptLoader'
 import type { SpineInfo } from '@/types'
+import { SpinePlayer } from '@esotericsoftware/spine-player'
 
 const preview = usePreviewStore()
 
 // ---- State ----
-const loading        = ref(false)
-const error          = ref('')
-const spineInfo      = ref<SpineInfo | null>(null)
-const animations     = ref<string[]>([])
-const skins          = ref<string[]>([])
-const currentAnim    = ref('')
-const currentSkin    = ref('default')
-const isPlaying      = ref(true)
-const playSpeed      = ref(1)
-const bgColor        = ref('#1a1a2e')
-const containerRef   = ref<HTMLDivElement | null>(null)
+const loading      = ref(false)
+const error        = ref('')
+const versionWarn  = ref('')
+const spineInfo    = ref<SpineInfo | null>(null)
+const animations   = ref<string[]>([])
+const skins        = ref<string[]>([])
+const currentAnim  = ref('')
+const currentSkin  = ref('default')
+const isPlaying    = ref(true)
+const playSpeed    = ref(1)
+const bgColor      = ref('#1a1a2e')
+const pmaEnabled   = ref(false)
+const containerRef = ref<HTMLDivElement | null>(null)
 
 let playerInstance: any = null
-let cssLinked = false
 
-// ---- Runtime URLs ----
-function getRuntimeUrls(versionStr: string): string[] {
-  const [major = '3', minor = '8'] = versionStr.split('.')
-  const majorN = parseInt(major)
-  const minorN = parseInt(minor)
+// Stored config so the player can be rebuilt when PMA is toggled
+let savedPlayerConfig: {
+  majorVer:    number
+  jsonName:    string
+  atlasName:   string
+  animList:    string[]
+  skinList:    string[]
+  rawDataURIs: Record<string, string>
+} | null = null
 
-  // Local vendor files (offline first)
-  const localFile = `/vendor/spine-player-${majorN}.${minorN}.js`
+// ---- Spine 3.x runtime (loaded on demand via CDN / vendor) ----
+// Build files are in spine-ts/build/ on the 3.8 branch, not spine-ts/player/build/
+// jsDelivr / raw.githubusercontent.com serve JS as text/plain so we must use
+// fetch-as-blob to bypass browser strict MIME type checking on <script> tags.
+const SPINE3_JS_VENDOR = '/vendor/spine-player-3.8.js'
+const SPINE3_JS_CDNS = [
+  'https://cdn.jsdelivr.net/gh/EsotericSoftware/spine-runtimes@3.8/spine-ts/build/spine-player.js',
+  'https://raw.githubusercontent.com/EsotericSoftware/spine-runtimes/3.8/spine-ts/build/spine-player.js',
+]
+const SPINE3_CSS_CDN = 'https://cdn.jsdelivr.net/gh/EsotericSoftware/spine-runtimes@3.8/spine-ts/player/css/spine-player.css'
+let spine3CssInjected = false
 
-  if (majorN >= 4) {
-    return [
-      localFile,
-      `https://esotericsoftware.com/files/spine-player/4.1/spine-player.min.js`,
-    ]
-  } else if (minorN >= 8) {
-    return [
-      localFile,
-      `https://esotericsoftware.com/files/spine-player/3.8/spine-player.min.js`,
-    ]
-  } else if (minorN >= 6) {
-    return [
-      localFile,
-      `/vendor/spine-player-3.8.js`,
-      `https://esotericsoftware.com/files/spine-player/3.6/spine-player.min.js`,
-      `https://esotericsoftware.com/files/spine-player/3.8/spine-player.min.js`,
-    ]
-  } else {
-    return [
-      localFile,
-      `https://esotericsoftware.com/files/spine-player/3.8/spine-player.min.js`,
-    ]
+/** Fetch a script as text, re-wrap in a blob with correct MIME type, then inject.
+ *  This bypasses browser MIME-type blocking when CDNs serve .js as text/plain.
+ *  Throws if the response is HTML (e.g. Vite SPA fallback for missing vendor file). */
+async function fetchAndExecScript(url: string): Promise<void> {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  // Vite dev server returns index.html (Content-Type: text/html, 200) for unknown paths.
+  // CDNs may also return an HTML error page. Reject anything that isn't JavaScript.
+  const ct = res.headers.get('content-type') || ''
+  if (ct.includes('text/html')) throw new Error(`Got HTML instead of JS from ${url}`)
+  const code = await res.text()
+  if (code.trimStart().startsWith('<')) throw new Error(`Response looks like HTML from ${url}`)
+  const blob = new Blob([code], { type: 'application/javascript' })
+  const blobUrl = URL.createObjectURL(blob)
+  try {
+    await loadScript(blobUrl)
+  } finally {
+    URL.revokeObjectURL(blobUrl)
   }
 }
 
-function getCssUrl(versionStr: string): string {
-  const major = parseInt(versionStr.split('.')[0] ?? '3')
-  const minor = parseInt(versionStr.split('.')[1] ?? '8')
-  if (major >= 4) return `https://esotericsoftware.com/files/spine-player/4.1/spine-player.css`
-  if (minor >= 8) return `https://esotericsoftware.com/files/spine-player/3.8/spine-player.css`
-  return `https://esotericsoftware.com/files/spine-player/3.6/spine-player.css`
-}
+async function ensureSpine3(): Promise<boolean> {
+  // Already loaded?
+  if ((window as any).spine?.SpinePlayer) return true
 
-async function ensureRuntime(version: string): Promise<boolean> {
-  const urls = getRuntimeUrls(version)
-
-  // Inject CSS once
-  if (!cssLinked) {
+  if (!spine3CssInjected) {
     const link = document.createElement('link')
-    link.rel = 'stylesheet'
-    link.href = getCssUrl(version)
+    link.rel  = 'stylesheet'
+    link.href = SPINE3_CSS_CDN
     document.head.appendChild(link)
-    cssLinked = true
+    spine3CssInjected = true
   }
 
-  for (const url of urls) {
+  // Use fetchAndExecScript for ALL URLs so that a missing vendor file doesn't
+  // produce a <script> 404 console error — fetch() fails silently via res.ok check.
+  for (const url of [SPINE3_JS_VENDOR, ...SPINE3_JS_CDNS]) {
     try {
-      await loadScript(url)
-      if ((window as any).spine) return true
+      await fetchAndExecScript(url)
+      if ((window as any).spine?.SpinePlayer) return true
     } catch { /* try next */ }
   }
   return false
@@ -103,13 +93,14 @@ async function ensureRuntime(version: string): Promise<boolean> {
 
 // ---- Main load ----
 watch(
-  () => preview.asset,
-  async (asset) => {
+  [() => preview.asset, () => preview.openSerial],
+  async ([asset]) => {
     destroyPlayer()
-    error.value     = ''
-    spineInfo.value = null
-    animations.value = []
-    skins.value      = []
+    error.value       = ''
+    versionWarn.value = ''
+    spineInfo.value   = null
+    animations.value  = []
+    skins.value       = []
     currentAnim.value = ''
     currentSkin.value = 'default'
 
@@ -126,71 +117,71 @@ watch(
         return
       }
 
-      // Read inputs
       const [jsonText, atlasText] = await Promise.all([
         readFileAsText(jsonFile),
         readFileAsText(atlasFile),
       ])
 
-      // Extract version from skeleton data
       let skeJson: any
       try { skeJson = JSON.parse(jsonText) } catch {
         error.value = '无效的 JSON 骨骼文件'
         return
       }
 
-      const version = skeJson?.skeleton?.spine || '3.8.0'
+      const version  = skeJson?.skeleton?.spine || '4.0.0'
+      const majorVer = parseInt(version.split('.')[0] ?? '4')
+
       const animList = Object.keys(skeJson?.animations || {})
-      const skinList = (skeJson?.skins || []).map((s: any) => typeof s === 'string' ? s : s.name).filter(Boolean)
+      const skinList = (skeJson?.skins || [])
+        .map((s: any) => (typeof s === 'string' ? s : s.name))
+        .filter(Boolean)
       if (!skinList.includes('default')) skinList.unshift('default')
 
-      spineInfo.value = { version, animationNames: animList, skinNames: skinList }
-      animations.value = animList
-      skins.value      = skinList
+      spineInfo.value   = { version, animationNames: animList, skinNames: skinList }
+      animations.value  = animList
+      skins.value       = skinList
       currentAnim.value = animList[0] || ''
       currentSkin.value = skinList[0] || 'default'
 
-      // Load runtime
-      const ok = await ensureRuntime(version)
-      if (!ok) {
-        error.value = `无法加载 Spine ${version} 运行时。请将 spine-player 文件放入 public/vendor/ 目录。`
-        return
+      // Use readFileAsBlob to support both FSAPI (handle) and webkitdirectory (file) modes
+      const pngBlob    = await readFileAsBlob(pngFile)
+      const pngDataUri = await blobToDataUrl(pngBlob)
+
+      // First non-blank/non-comment line of atlas = texture filename referenced inside
+      const textureName =
+        atlasText.split('\n').map(l => l.trim()).find(l => l.length > 0 && !l.startsWith('#')) ||
+        pngFile.name
+
+      const rawDataURIs: Record<string, string> = {
+        [jsonFile.name]:  `data:application/json;charset=utf-8,${encodeURIComponent(jsonText)}`,
+        [atlasFile.name]: `data:text/plain;charset=utf-8,${encodeURIComponent(atlasText)}`,
+        [textureName]:    pngDataUri,
       }
-
-      // Convert PNG to data URI for rawDataURIs
-      const pngDataUri = await blobToDataUrl(pngFile.file!)
-
-      // Find the texture filename as referenced in the atlas
-      const textureName = atlasText.split('\n').map(l => l.trim()).find(l => l.length > 0 && !l.startsWith('#'))
-            || pngFile.name
-
-      // Build rawDataURIs map
-      const rawDataURIs: Record<string, string> = {}
-      rawDataURIs[jsonFile.name]  = `data:application/json;charset=utf-8,${encodeURIComponent(jsonText)}`
-      rawDataURIs[atlasFile.name] = `data:text/plain;charset=utf-8,${encodeURIComponent(atlasText)}`
-      rawDataURIs[textureName]    = pngDataUri
-      // Also map PNG by its filename in case it differs from atlas reference
       if (textureName !== pngFile.name) rawDataURIs[pngFile.name] = pngDataUri
 
-      // Give Vue time to update DOM
-      await new Promise(r => setTimeout(r, 80))
+      // Wait for Vue to mount the container
+      // Store config so we can rebuild when PMA is toggled
+      savedPlayerConfig = {
+        majorVer,
+        jsonName:    jsonFile.name,
+        atlasName:   atlasFile.name,
+        animList,
+        skinList,
+        rawDataURIs,
+      }
 
+      await new Promise(r => setTimeout(r, 80))
       if (!containerRef.value) { error.value = '容器未挂载'; return }
 
-      const sp = (window as any).spine
-      playerInstance = new sp.SpinePlayer(containerRef.value, {
-        jsonUrl:       jsonFile.name,
-        atlasUrl:      atlasFile.name,
-        animation:     animList[0] || undefined,
-        skin:          skinList[0] || 'default',
-        backgroundColor: bgColor.value.replace('#', '#') + 'ff',
-        rawDataURIs,
-        showControls:  false,
-        alpha:         true,
-        preserveDrawingBuffer: false,
-      })
+      if (majorVer < 4) {
+        const ok = await ensureSpine3()
+        if (!ok) {
+          error.value = '无法加载 Spine 3.x 运行时，请检查网络连接或将 spine-player-3.8.js 放入 public/vendor/ 目录'
+          return
+        }
+      }
 
-      isPlaying.value = true
+      await createSpinePlayer()
     } catch (e: any) {
       error.value = e?.message || String(e)
     } finally {
@@ -200,32 +191,88 @@ watch(
   { immediate: true }
 )
 
+// ---- Build / rebuild the Spine player (called on load and on PMA toggle) ----
+async function createSpinePlayer() {
+  const cfg = savedPlayerConfig
+  if (!cfg || !containerRef.value) return
+  destroyPlayer()
+  // Give Vue / WebGL a tick to clean up the old canvas
+  await new Promise(r => setTimeout(r, 30))
+  if (!containerRef.value) return
+
+  if (cfg.majorVer < 4) {
+    const sp = (window as any).spine
+    playerInstance = new sp.SpinePlayer(containerRef.value, {
+      jsonUrl:            cfg.jsonName,
+      atlasUrl:           cfg.atlasName,
+      animation:          cfg.animList[0] || undefined,
+      skin:               cfg.skinList[0] || 'default',
+      rawDataURIs:        cfg.rawDataURIs,
+      showControls:       false,
+      alpha:              true,
+      premultipliedAlpha: pmaEnabled.value,
+      backgroundColor:    '#00000000',
+      success: () => { isPlaying.value = true },
+      error:   (_p: any, msg: string) => { error.value = msg || '加载失败' },
+    })
+  } else {
+    playerInstance = new SpinePlayer(containerRef.value, {
+      skeleton:              cfg.jsonName,
+      atlas:                 cfg.atlasName,
+      animation:             cfg.animList[0] || undefined,
+      skin:                  cfg.skinList[0] || 'default',
+      rawDataURIs:           cfg.rawDataURIs,
+      showControls:          false,
+      alpha:                 true,
+      premultipliedAlpha:    pmaEnabled.value,
+      backgroundColor:       '00000000',
+      preserveDrawingBuffer: false,
+      success: () => { isPlaying.value = true },
+      error:   (_p: any, msg: string) => { error.value = msg || '加载失败' },
+    })
+  }
+}
+
+watch(pmaEnabled, async () => {
+  if (savedPlayerConfig) await createSpinePlayer()
+})
+
 // ---- Controls ----
 function playAnim(name: string) {
   currentAnim.value = name
-  try { playerInstance?.setAnimation?.(name) } catch {}
+  try { playerInstance?.setAnimation?.(name, true) } catch {}
+  try { playerInstance?.play?.() } catch {}
 }
 
 function setSkin(name: string) {
   currentSkin.value = name
+  // 4.x API
+  try {
+    playerInstance?.skeleton?.setSkinByName?.(name)
+    playerInstance?.skeleton?.setSlotsToSetupPose?.()
+  } catch {}
+  // 3.x API fallback (player exposes setSkin directly)
   try { playerInstance?.setSkin?.(name) } catch {}
 }
 
 function togglePlay() {
   if (!playerInstance) return
-  try {
-    if (isPlaying.value) {
-      playerInstance.pause?.()
-    } else {
-      playerInstance.play?.()
-    }
-    isPlaying.value = !isPlaying.value
-  } catch {}
+  if (isPlaying.value) {
+    try { playerInstance.pause() } catch {}
+    isPlaying.value = false
+  } else {
+    try { playerInstance.play() } catch {}
+    isPlaying.value = true
+  }
 }
 
 function setSpeed(s: number) {
   playSpeed.value = s
-  try { playerInstance?.setSpeed?.(s) } catch {}
+  if (playerInstance) {
+    // 4.x: speed is a property; 3.x: setSpeed() may be a method
+    try { playerInstance.speed = s } catch {}
+    try { playerInstance.setSpeed?.(s) } catch {}
+  }
 }
 
 // ---- Cleanup ----
@@ -262,7 +309,12 @@ onUnmounted(destroyPlayer)
             </button>
           </div>
 
-          <!-- Warning / error bar -->
+          <!-- Version warning bar -->
+          <div v-if="versionWarn" class="px-4 py-2 text-xs text-orange-400 bg-orange-900/20 border-b border-orange-800/30 flex-shrink-0">
+            ⚠ {{ versionWarn }}
+          </div>
+
+          <!-- Error bar -->
           <div v-if="error && !loading" class="px-4 py-2 text-xs text-yellow-400 bg-yellow-900/20 border-b border-yellow-800/30 flex-shrink-0">
             ⚠ {{ error }}
           </div>
@@ -326,6 +378,21 @@ onUnmounted(destroyPlayer)
                     >{{ s }}x</button>
                   </div>
                 </div>
+              </div>
+
+              <!-- Premultiplied Alpha -->
+              <div class="p-3 border-b border-gray-700">
+                <button
+                  class="w-full text-xs px-2 py-1.5 rounded flex items-center gap-2 transition-colors"
+                  :class="pmaEnabled
+                    ? 'bg-green-700/40 text-green-300 border border-green-700/60'
+                    : 'bg-gray-800 text-gray-400 border border-gray-700 hover:text-gray-200'"
+                  @click="pmaEnabled = !pmaEnabled"
+                >
+                  <span class="text-base leading-none" :class="pmaEnabled ? 'opacity-100' : 'opacity-40'">α</span>
+                  预乘 Alpha
+                  <span class="ml-auto text-xs" :class="pmaEnabled ? 'text-green-400' : 'text-gray-600'">{{ pmaEnabled ? 'ON' : 'OFF' }}</span>
+                </button>
               </div>
 
               <!-- Background -->

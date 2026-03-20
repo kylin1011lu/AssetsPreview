@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, shallowRef } from 'vue'
-import type { AssetItem, AssetType, FilterState, SortField, SortOrder, DirNode, ScanResult } from '@/types'
+import type { AssetItem, AssetType, TypeFilter, FilterState, SortField, SortOrder, DirNode, ScanResult } from '@/types'
 import { AssetIndex } from '@/core/assetIndex'
 
 export type ScanStatus = 'idle' | 'scanning' | 'done' | 'error'
@@ -24,7 +24,8 @@ export const useAssetStore = defineStore('assets', () => {
   // ---- filter/sort state ----
   const filter = ref<FilterState>({
     query: '',
-    types: [],
+    type: null,
+    imageExt: '',
     sortField: 'name',
     sortOrder: 'asc',
   })
@@ -39,6 +40,12 @@ export const useAssetStore = defineStore('assets', () => {
   const typeStats = computed<Record<string, number>>(() => {
     if (!index.value) return {}
     return index.value.countByTypeInDir(currentDirPath.value)
+  })
+
+  // ---- computed: available image extensions in current dir ----
+  const imageExts = computed<string[]>(() => {
+    if (!index.value) return []
+    return index.value.getImageExts(currentDirPath.value)
   })
 
   // ---- actions ----
@@ -72,7 +79,7 @@ export const useAssetStore = defineStore('assets', () => {
     dirTree.value      = null
     rootPath.value     = ''
     currentDirPath.value = ''
-    filter.value = { query: '', types: [], sortField: 'name', sortOrder: 'asc' }
+    filter.value = { query: '', type: null, imageExt: '', sortField: 'name', sortOrder: 'asc' }
   }
 
   function setCurrentDir(relDirPath: string) {
@@ -83,17 +90,12 @@ export const useAssetStore = defineStore('assets', () => {
     filter.value = { ...filter.value, query: q }
   }
 
-  function toggleTypeFilter(type: AssetType) {
-    const types = filter.value.types
-    if (types.includes(type)) {
-      filter.value = { ...filter.value, types: types.filter(t => t !== type) }
-    } else {
-      filter.value = { ...filter.value, types: [...types, type] }
-    }
+  function setTypeFilter(type: TypeFilter | null) {
+    filter.value = { ...filter.value, type, imageExt: '' }
   }
 
-  function clearTypeFilter() {
-    filter.value = { ...filter.value, types: [] }
+  function setImageExt(ext: string) {
+    filter.value = { ...filter.value, imageExt: ext }
   }
 
   function setSort(field: SortField, order?: SortOrder) {
@@ -117,14 +119,15 @@ export const useAssetStore = defineStore('assets', () => {
     filter,
     filteredAssets,
     typeStats,
+    imageExts,
     setScanProgress,
     setScanResult,
     setScanError,
     reset,
     setCurrentDir,
     setQuery,
-    toggleTypeFilter,
-    clearTypeFilter,
+    setTypeFilter,
+    setImageExt,
     setSort,
   }
 })
