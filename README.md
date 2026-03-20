@@ -4,6 +4,8 @@
 
 **🔗 在线体验：[https://www.youxiheai.xin/project/asset-viewer](https://www.youxiheai.xin/project/asset-viewer)**
 
+![预览截图](docs/preview.png)
+
 ## 功能特性
 
 | 资源类型 | 支持能力 |
