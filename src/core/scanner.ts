@@ -22,7 +22,7 @@ import { readFileAsText } from './fileReader'
 // Extension sets
 // ---------------------------------------------------------------
 
-const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.pkm'])
 const AUDIO_EXTS = new Set(['.mp3', '.ogg', '.wav'])
 const TTF_EXTS   = new Set(['.ttf', '.otf', '.woff', '.woff2'])
 
@@ -210,11 +210,14 @@ export async function scanEntries(
       if (consumed.has(f.path)) continue
       const fntText = await readFntHeader(f)
       const pngName = extractFntPageFile(fntText)
+      const fntBase = baseName(f.name)
       const files: FileEntry[] = [f]
-      if (pngName) {
-        const png = byName.get(pngName)
-        if (png && !consumed.has(png.path)) files.push(png)
-      }
+      // Try the PNG referenced in the .fnt file, then a .pkm with same base name
+      const texFile =
+        (pngName && byName.get(pngName) && !consumed.has(byName.get(pngName)!.path)) ? byName.get(pngName)! :
+        (byName.get(`${fntBase}.pkm`) && !consumed.has(byName.get(`${fntBase}.pkm`)!.path)) ? byName.get(`${fntBase}.pkm`)! :
+        null
+      if (texFile) files.push(texFile)
 
       appendAsset(assets, consumed, {
         id: nextId(),

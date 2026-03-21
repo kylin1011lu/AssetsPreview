@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import type { AssetItem } from '@/types'
-import { createObjectURL } from '@/core/fileReader'
+import { createObjectURL, readFileAsArrayBuffer } from '@/core/fileReader'
+import { pkmToDataUrl } from '@/utils/pkmDecoder'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useAssetStore } from '@/stores/assetStore'
 
@@ -26,11 +27,16 @@ watch(
     if (!asset) return
     try {
       const fileToLoad = (preview.forceImage && asset.type !== 'image')
-        ? (asset.files.find(f => f.name.endsWith('.png')) ?? asset.mainFile)
+        ? (asset.files.find(f => f.name.endsWith('.png') || f.name.endsWith('.pkm')) ?? asset.mainFile)
         : asset.mainFile
-      const url = await createObjectURL(fileToLoad)
-      blobUrl = url
-      imgUrl.value = url
+      if (fileToLoad.name.endsWith('.pkm')) {
+        const buf = await readFileAsArrayBuffer(fileToLoad)
+        imgUrl.value = pkmToDataUrl(buf)
+      } else {
+        const url = await createObjectURL(fileToLoad)
+        blobUrl = url
+        imgUrl.value = url
+      }
     } catch {
       imgError.value = true
     }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import type { AssetItem, AssetType, ThumbnailSize } from '@/types'
-import { createObjectURL } from '@/core/fileReader'
+import { createObjectURL, readFileAsArrayBuffer } from '@/core/fileReader'
+import { pkmToDataUrl } from '@/utils/pkmDecoder'
 import { useAssetStore } from '@/stores/assetStore'
 
 // ---- Context menu ----
@@ -69,8 +70,21 @@ function onMouseLeave() {
 const folderFeedback = ref(false)
 
 function absPath(relDir: string) {
-  const root = store.rootPath.replace(/[\/\\]$/, '')
-  return relDir ? `${root}/${relDir}` : root
+  const prefix = store.rootPrefix ? store.rootPrefix.replace(/[\/\\]+$/, '') + '/' : ''
+  const root   = store.rootPath.replace(/[\/\\]+$/, '')
+  const base   = prefix + root
+  return relDir ? `${base}/${relDir}` : base
+}
+
+const copyFullFeedback = ref(false)
+async function copyFullPath() {
+  const full = absPath(props.asset.relDirPath) + '/' + props.asset.mainFile.name
+  try {
+    await navigator.clipboard.writeText(full)
+    copyFullFeedback.value = true
+    setTimeout(() => { copyFullFeedback.value = false }, 1200)
+  } catch {}
+  closeCtx()
 }
 
 async function openFolder(e: MouseEvent) {
@@ -143,12 +157,15 @@ function loadThumb() {
 
   if (!thumbFile) return
 
-  createObjectURL(thumbFile)
-    .then(url => {
-      objectUrl = url
-      thumbUrl.value = url
-    })
-    .catch(() => { thumbError.value = true })
+  if (thumbFile.name.endsWith('.pkm')) {
+    readFileAsArrayBuffer(thumbFile)
+      .then(buf => { thumbUrl.value = pkmToDataUrl(buf) })
+      .catch(() => { thumbError.value = true })
+  } else {
+    createObjectURL(thumbFile)
+      .then(url => { objectUrl = url; thumbUrl.value = url })
+      .catch(() => { thumbError.value = true })
+  }
 }
 
 onMounted(() => {
@@ -213,6 +230,13 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
+
+// Image/audio format badge (top-right corner)
+const imageExtBadge = computed(() => {
+  if (props.asset.type !== 'image' && props.asset.type !== 'audio') return null
+  const dot = props.asset.mainFile.name.lastIndexOf('.')
+  return dot >= 0 ? props.asset.mainFile.name.slice(dot + 1).toUpperCase() : null
+})
 
 const cardStyle = computed(() => ({
   width: `${props.size}px`,
@@ -319,6 +343,12 @@ const thumbStyle = computed(() => ({
         </svg>
       </div>
 
+      <!-- Image format badge (top-right corner) -->
+      <span
+        v-if="imageExtBadge"
+        class="absolute top-1 right-1 text-[9px] font-bold leading-none px-1 py-0.5 rounded bg-black/60 text-gray-300 z-10 pointer-events-none"
+      >{{ imageExtBadge }}</span>
+
       <!-- Open folder button (bottom-right corner) -->
       <button
         class="absolute bottom-1 right-1 w-6 h-6 flex items-center justify-center rounded bg-black/50 hover:bg-black/80 text-gray-300 hover:text-white transition-all opacity-0 group-hover:opacity-100 z-10"
@@ -361,6 +391,16 @@ const thumbStyle = computed(() => ({
           <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z"/>
         </svg>
         {{ copyFeedback ? '已复制！' : '复制相对路径' }}
+      </button>
+      <button
+        v-if="store.rootPrefix"
+        class="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-gray-700 flex items-center gap-2"
+        @click="copyFullPath"
+      >
+        <svg class="w-3.5 h-3.5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd"/>
+        </svg>
+        {{ copyFullFeedback ? '已复制！' : '复制完整路径' }}
       </button>
       <button
         class="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-gray-700 flex items-center gap-2"

@@ -96,12 +96,13 @@ export class AssetIndex {
       }
     }
 
-    // Image extension sub-filter (applies to 'image' typed assets only)
+    // Image extension sub-filter (applies to 'image' and 'image-all' modes)
     if (filter.imageExt && (filter.type === 'image' || filter.type === 'image-all')) {
       const ext = '.' + filter.imageExt.toLowerCase()
       results = results.filter(a => {
-        if (a.type !== 'image') return true  // keep non-image assets in 'image-all' mode
-        return a.mainFile.name.toLowerCase().endsWith(ext)
+        if (a.type === 'image') return a.mainFile.name.toLowerCase().endsWith(ext)
+        // For non-image assets (dragonbones/spine/atlas/fnt), check their associated texture file
+        return a.files.some(f => f.name.toLowerCase().endsWith(ext))
       })
     }
 
@@ -148,13 +149,19 @@ export class AssetIndex {
     return counts as Record<AssetType, number>
   }
 
-  /** Returns sorted list of image file extensions for 'image' typed assets in the given dir. */
+  /** Returns sorted list of image file extensions present in the given dir (including textures of composite assets). */
   getImageExts(relDirPath = ''): string[] {
-    const items = this.getByDirPrefix(relDirPath).filter(a => a.type === 'image')
+    const items = this.getByDirPrefix(relDirPath).filter(a => IMAGE_ALL_TYPES.has(a.type))
     const exts = new Set<string>()
     for (const a of items) {
-      const dot = a.mainFile.name.lastIndexOf('.')
-      if (dot >= 0) exts.add(a.mainFile.name.slice(dot + 1).toLowerCase())
+      const files = a.type === 'image' ? [a.mainFile] : a.files
+      for (const f of files) {
+        const dot = f.name.lastIndexOf('.')
+        if (dot >= 0) {
+          const e = f.name.slice(dot + 1).toLowerCase()
+          if (['png', 'jpg', 'jpeg', 'webp', 'pkm'].includes(e)) exts.add(e)
+        }
+      }
     }
     return [...exts].sort()
   }

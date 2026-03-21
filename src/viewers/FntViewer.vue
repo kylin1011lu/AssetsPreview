@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, watch, onUnmounted, nextTick } from 'vue'
 import { usePreviewStore } from '@/stores/previewStore'
-import { readFileAsText, createObjectURL } from '@/core/fileReader'
+import { readFileAsText, createObjectURL, readFileAsArrayBuffer } from '@/core/fileReader'
+import { pkmToDataUrl } from '@/utils/pkmDecoder'
 import { parseFnt } from '@/core/parsers/fntParser'
 import type { FntData } from '@/core/parsers/fntParser'
 
@@ -46,14 +47,19 @@ watch(
       })
       customText.value = codes.map(c => String.fromCodePoint(c)).join('')
 
-      // Find texture png
-      const pngFile = asset.files.find(f =>
+      // Find texture: prefer .png referenced in .fnt, fallback to .pkm
+      const texFile = asset.files.find(f =>
         f.name === parsed.pageFile ||
         f.name.endsWith('.png')
-      )
-      if (pngFile) {
-        blobUrl = await createObjectURL(pngFile)
-        textureUrl.value = blobUrl
+      ) ?? asset.files.find(f => f.name.endsWith('.pkm'))
+      if (texFile) {
+        if (texFile.name.endsWith('.pkm')) {
+          const buf = await readFileAsArrayBuffer(texFile)
+          textureUrl.value = pkmToDataUrl(buf)
+        } else {
+          blobUrl = await createObjectURL(texFile)
+          textureUrl.value = blobUrl
+        }
       }
     } catch (e: any) {
       error.value = e?.message || String(e)

@@ -21,6 +21,16 @@ export const useAssetStore = defineStore('assets', () => {
   // ---- navigation ----
   const currentDirPath = ref('')  // relDirPath
 
+  // ---- root path prefix (user-set absolute parent, persisted per folder name) ----
+  const rootPrefix = ref('')
+
+  function _prefixKey(name: string) { return `ap_prefix_${name}` }
+
+  function setRootPrefix(prefix: string) {
+    rootPrefix.value = prefix.replace(/[\/\\]+$/, '')
+    if (rootDirName.value) localStorage.setItem(_prefixKey(rootDirName.value), rootPrefix.value)
+  }
+
   // ---- filter/sort state ----
   const filter = ref<FilterState>({
     query: '',
@@ -63,6 +73,8 @@ export const useAssetStore = defineStore('assets', () => {
     currentDirPath.value = ''
     scanStatus.value = 'done'
     scanError.value   = null
+    // Auto-load saved prefix for this folder
+    rootPrefix.value = localStorage.getItem(_prefixKey(rootDirName.value)) ?? ''
   }
 
   function setScanError(msg: string) {
@@ -78,6 +90,8 @@ export const useAssetStore = defineStore('assets', () => {
     index.value        = null
     dirTree.value      = null
     rootPath.value     = ''
+    rootDirName.value  = ''
+    rootPrefix.value   = ''
     currentDirPath.value = ''
     filter.value = { query: '', type: null, imageExt: '', sortField: 'name', sortOrder: 'asc' }
   }
@@ -113,6 +127,7 @@ export const useAssetStore = defineStore('assets', () => {
     scanError,
     rootPath,
     rootDirName,
+    rootPrefix,
     index,
     dirTree,
     currentDirPath,
@@ -125,6 +140,7 @@ export const useAssetStore = defineStore('assets', () => {
     setScanError,
     reset,
     setCurrentDir,
+    setRootPrefix,
     setQuery,
     setTypeFilter,
     setImageExt,

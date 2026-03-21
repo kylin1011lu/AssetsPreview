@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, nextTick } from 'vue'
 import { useAssetStore } from '@/stores/assetStore'
 import { usePreviewStore } from '@/stores/previewStore'
 import FolderPicker from '@/components/FolderPicker.vue'
@@ -22,6 +22,21 @@ const preview = usePreviewStore()
 const sidebarOpen  = ref(true)
 const thumbSize    = ref<80 | 120 | 180>(120)
 const sidebarWidth = ref(224) // px
+
+// ---- Root path prefix editor ----
+const editingPrefix  = ref(false)
+const prefixDraft    = ref('')
+function startEditPrefix() {
+  prefixDraft.value = store.rootPrefix
+  editingPrefix.value = true
+  // Focus input after render
+  nextTick(() => (document.getElementById('prefix-input') as HTMLInputElement | null)?.focus())
+}
+function commitPrefix() {
+  store.setRootPrefix(prefixDraft.value)
+  editingPrefix.value = false
+}
+function cancelPrefix() { editingPrefix.value = false }
 
 let resizing = false
 let resizeStartX = 0
@@ -70,8 +85,39 @@ function onResizerUp() {
       <!-- Current path indicator -->
       <div
         v-if="store.rootDirName"
-        class="text-xs text-gray-500 truncate max-w-xs flex-shrink-0"
-      >{{ store.rootDirName }}</div>
+        class="flex items-center gap-1 text-xs text-gray-500 flex-shrink-0 max-w-xs"
+      >
+        <!-- Prefix part (clickable to edit) -->
+        <template v-if="!editingPrefix">
+          <span class="truncate max-w-[180px]" :title="store.rootPrefix || '未设置路径前缀'">
+            <span v-if="store.rootPrefix" class="text-gray-500">…/{{ store.rootPrefix.split(/[\/\\]/).slice(-1)[0] }}/</span>
+            <span class="text-gray-300 font-medium">{{ store.rootDirName }}</span>
+          </span>
+          <button
+            class="flex-shrink-0 text-gray-600 hover:text-gray-300 transition-colors px-0.5"
+            :title="store.rootPrefix ? '修改路径前缀（父目录绝对路径）' : '设置路径前缀，以显示完整硬盘路径'"
+            @click="startEditPrefix"
+          >
+            <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/>
+            </svg>
+          </button>
+        </template>
+        <!-- Inline editor -->
+        <template v-else>
+          <input
+            id="prefix-input"
+            v-model="prefixDraft"
+            type="text"
+            placeholder="/Users/you/projects/my-game"
+            class="bg-gray-800 border border-blue-500 rounded px-2 py-0.5 text-xs text-gray-200 w-56 focus:outline-none"
+            @keydown.enter="commitPrefix"
+            @keydown.escape="cancelPrefix"
+          />
+          <button class="text-xs text-blue-400 hover:text-blue-300 px-1" @click="commitPrefix">确定</button>
+          <button class="text-xs text-gray-500 hover:text-gray-300 px-1" @click="cancelPrefix">取消</button>
+        </template>
+      </div>
 
       <div class="flex-1" />
 
